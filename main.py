@@ -14,7 +14,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Database connection using environment variable
+# Database connection function
 def get_db_connection():
     database_url = os.getenv("DATABASE_URL")
     if database_url:
@@ -26,6 +26,30 @@ def get_db_connection():
         database_url = "postgresql://root:sa123@localhost/jobflow_db"
     
     return psycopg2.connect(database_url)
+
+# Initialize database - create table if it doesn't exist
+def init_db():
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS jobs (
+                id SERIAL PRIMARY KEY,
+                company VARCHAR(100),
+                role VARCHAR(100),
+                status VARCHAR(50),
+                applied_date DATE
+            )
+        """)
+        conn.commit()
+        cursor.close()
+        conn.close()
+        print("✅ Database table ready")
+    except Exception as e:
+        print(f"❌ Database init error: {e}")
+
+# Call init_db when app starts
+init_db()
 
 # ---------- GET JOBS ----------
 @app.get("/jobs")
