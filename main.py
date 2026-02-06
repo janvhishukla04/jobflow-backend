@@ -11,6 +11,21 @@ from pydantic import BaseModel
 
 app = FastAPI()
 
+# ADD THIS CORS MIDDLEWARE
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "https://jobflow-frontend-q2rk1a2u4-janvhi-shuklas-projects.vercel.app",
+        "https://jobflow-frontend-omega.vercel.app",
+        "http://localhost:3000",
+        "http://localhost:5500",
+        "*"  # Allow all origins temporarily for testing
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 # Security setup
 SECRET_KEY = "jobflow-secret-key-2026-change-in-production"
 ALGORITHM = "HS256"
