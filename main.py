@@ -1,6 +1,7 @@
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.responses import JSONResponse
 import psycopg2
 from psycopg2.extras import RealDictCursor
 import os
@@ -11,19 +12,32 @@ from pydantic import BaseModel
 
 app = FastAPI()
 
-# CORS - ONLY ONE MIDDLEWARE, ALLOW ALL ORIGINS
+# CORS Middleware - MORE PERMISSIVE
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins
+    allow_origins=["*"],
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
+
+# Add OPTIONS handler for preflight requests
+@app.options("/{full_path:path}")
+async def options_handler(full_path: str):
+    return JSONResponse(
+        content={},
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+            "Access-Control-Allow-Headers": "*",
+        }
+    )
 
 # Security setup
 SECRET_KEY = "jobflow-secret-key-2026-change-in-production"
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 10080  # 7 days
+ACCESS_TOKEN_EXPIRE_MINUTES = 10080
 
 security = HTTPBearer()
 
