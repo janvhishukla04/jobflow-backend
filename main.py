@@ -118,14 +118,24 @@ def signup(user: UserSignup):
     cursor = conn.cursor()
     
     try:
+        # Validate password length (bcrypt limit is 72 bytes)
+        if len(user.password) > 72:
+            raise HTTPException(status_code=400, detail="Password cannot exceed 72 characters")
+        
+        if len(user.password) < 6:
+            raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
+        
         # Check if user exists
         cursor.execute("SELECT id FROM users WHERE email=%s OR username=%s", 
                       (user.email, user.username))
         if cursor.fetchone():
             raise HTTPException(status_code=400, detail="User already exists")
         
+        # Truncate password to 72 characters just to be safe
+        safe_password = user.password[:72]
+        
         # Create user
-        hashed_pw = hash_password(user.password)
+        hashed_pw = hash_password(safe_password)
         cursor.execute(
             "INSERT INTO users (username, email, password_hash) VALUES (%s, %s, %s) RETURNING id",
             (user.username, user.email, hashed_pw)
@@ -140,13 +150,14 @@ def signup(user: UserSignup):
             "token": token,
             "user": {"id": user_id, "username": user.username, "email": user.email}
         }
+    except HTTPException:
+        raise
     except Exception as e:
         conn.rollback()
         raise HTTPException(status_code=400, detail=str(e))
     finally:
         cursor.close()
         conn.close()
-
 # ---------- LOGIN ----------
 @app.post("/login")
 def login(user: UserLogin):
