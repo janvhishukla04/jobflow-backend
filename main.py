@@ -11,16 +11,10 @@ from pydantic import BaseModel
 
 app = FastAPI()
 
-# ADD THIS CORS MIDDLEWARE
+# CORS - ONLY ONE MIDDLEWARE, ALLOW ALL ORIGINS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "https://jobflow-frontend-q2rk1a2u4-janvhi-shuklas-projects.vercel.app",
-        "https://jobflow-frontend-omega.vercel.app",
-        "http://localhost:3000",
-        "http://localhost:5500",
-        "*"  # Allow all origins temporarily for testing
-    ],
+    allow_origins=["*"],  # Allow all origins
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -32,14 +26,6 @@ ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 10080  # 7 days
 
 security = HTTPBearer()
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 # Pydantic models
 class UserSignup(BaseModel):
@@ -97,7 +83,7 @@ def init_db():
 
 init_db()
 
-# Simple password hashing using SHA256 (production apps should use bcrypt)
+# Password hashing
 def hash_password(password: str) -> str:
     return hashlib.sha256(password.encode()).hexdigest()
 
