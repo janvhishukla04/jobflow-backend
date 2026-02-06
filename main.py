@@ -12,7 +12,7 @@ from pydantic import BaseModel
 app = FastAPI()
 
 # Security setup
-SECRET_KEY = "your-secret-key-change-this-in-production"  # Change this!
+SECRET_KEY = "your-secret-key-change-this-in-production-make-it-random-and-long"
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 10080  # 7 days
 
@@ -88,10 +88,14 @@ init_db()
 
 # Auth helper functions
 def hash_password(password: str):
-    return pwd_context.hash(password)
+    # Truncate to 72 characters for bcrypt compatibility
+    safe_password = password[:72]
+    return pwd_context.hash(safe_password)
 
 def verify_password(plain_password, hashed_password):
-    return pwd_context.verify(plain_password, hashed_password)
+    # Truncate to 72 characters for bcrypt compatibility
+    safe_password = plain_password[:72]
+    return pwd_context.verify(safe_password, hashed_password)
 
 def create_access_token(data: dict):
     to_encode = data.copy()
@@ -118,9 +122,12 @@ def signup(user: UserSignup):
     cursor = conn.cursor()
     
     try:
-        # Validate password length (bcrypt limit is 72 bytes)
-        if len(user.password) > 72:
-            raise HTTPException(status_code=400, detail="Password cannot exceed 72 characters")
+        # Validate inputs
+        if not user.username or not user.email or not user.password:
+            raise HTTPException(status_code=400, detail="All fields are required")
+        
+        if len(user.username) < 3:
+            raise HTTPException(status_code=400, detail="Username must be at least 3 characters")
         
         if len(user.password) < 6:
             raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
@@ -128,14 +135,12 @@ def signup(user: UserSignup):
         # Check if user exists
         cursor.execute("SELECT id FROM users WHERE email=%s OR username=%s", 
                       (user.email, user.username))
-        if cursor.fetchone():
-            raise HTTPException(status_code=400, detail="User already exists")
+        existing_user = cursor.fetchone()
+        if existing_user:
+            raise HTTPException(status_code=400, detail="User with this email or username already exists")
         
-        # Truncate password to 72 characters just to be safe
-        safe_password = user.password[:72]
-        
-        # Create user
-        hashed_pw = hash_password(safe_password)
+        # Create user (hash_password now handles truncation)
+        hashed_pw = hash_password(user.password)
         cursor.execute(
             "INSERT INTO users (username, email, password_hash) VALUES (%s, %s, %s) RETURNING id",
             (user.username, user.email, hashed_pw)
@@ -151,6 +156,7 @@ def signup(user: UserSignup):
             "user": {"id": user_id, "username": user.username, "email": user.email}
         }
     except HTTPException:
+        conn.rollback()
         raise
     except Exception as e:
         conn.rollback()
@@ -158,6 +164,7 @@ def signup(user: UserSignup):
     finally:
         cursor.close()
         conn.close()
+
 # ---------- LOGIN ----------
 @app.post("/login")
 def login(user: UserLogin):
@@ -169,7 +176,7 @@ def login(user: UserLogin):
         db_user = cursor.fetchone()
         
         if not db_user or not verify_password(user.password, db_user['password_hash']):
-            raise HTTPException(status_code=401, detail="Invalid credentials")
+            raise HTTPException(status_code=401, detail="Invalid email or password")
         
         token = create_access_token({"user_id": db_user['id']})
         
