@@ -1,10 +1,10 @@
-from fastapi import FastAPI, HTTPException, Depends, status
+from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import psycopg2
 from psycopg2.extras import RealDictCursor
 import os
-from passlib.context import CryptContext
+import hashlib
 from jose import JWTError, jwt
 from datetime import datetime, timedelta
 from pydantic import BaseModel
@@ -12,11 +12,10 @@ from pydantic import BaseModel
 app = FastAPI()
 
 # Security setup
-SECRET_KEY = "your-secret-key-change-this-in-production-make-it-random-and-long"
+SECRET_KEY = "jobflow-secret-key-2026-change-in-production"
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 10080  # 7 days
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 security = HTTPBearer()
 
 app.add_middleware(
@@ -37,7 +36,7 @@ class UserLogin(BaseModel):
     email: str
     password: str
 
-# Database connection function
+# Database connection
 def get_db_connection():
     database_url = os.getenv("DATABASE_URL")
     if database_url:
@@ -45,7 +44,6 @@ def get_db_connection():
             database_url = database_url.replace("postgres://", "postgresql://", 1)
     else:
         database_url = "postgresql://root:sa123@localhost/jobflow_db"
-    
     return psycopg2.connect(database_url)
 
 # Initialize database
@@ -54,7 +52,6 @@ def init_db():
         conn = get_db_connection()
         cursor = conn.cursor()
         
-        # Create users table
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 id SERIAL PRIMARY KEY,
@@ -65,7 +62,6 @@ def init_db():
             )
         """)
         
-        # Create jobs table with user_id
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS jobs (
                 id SERIAL PRIMARY KEY,
@@ -86,23 +82,18 @@ def init_db():
 
 init_db()
 
-# Auth helper functions
-def hash_password(password: str):
-    # Truncate to 72 characters for bcrypt compatibility
-    safe_password = password[:72]
-    return pwd_context.hash(safe_password)
+# Simple password hashing using SHA256 (production apps should use bcrypt)
+def hash_password(password: str) -> str:
+    return hashlib.sha256(password.encode()).hexdigest()
 
-def verify_password(plain_password, hashed_password):
-    # Truncate to 72 characters for bcrypt compatibility
-    safe_password = plain_password[:72]
-    return pwd_context.verify(safe_password, hashed_password)
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    return hash_password(plain_password) == hashed_password
 
 def create_access_token(data: dict):
     to_encode = data.copy()
     expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     to_encode.update({"exp": expire})
-    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-    return encoded_jwt
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
 def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
     try:
@@ -115,16 +106,15 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid token")
 
-# ---------- SIGNUP ----------
+# SIGNUP
 @app.post("/signup")
 def signup(user: UserSignup):
     conn = get_db_connection()
     cursor = conn.cursor()
     
     try:
-        # Validate inputs
         if not user.username or not user.email or not user.password:
-            raise HTTPException(status_code=400, detail="All fields are required")
+            raise HTTPException(status_code=400, detail="All fields required")
         
         if len(user.username) < 3:
             raise HTTPException(status_code=400, detail="Username must be at least 3 characters")
@@ -132,14 +122,10 @@ def signup(user: UserSignup):
         if len(user.password) < 6:
             raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
         
-        # Check if user exists
-        cursor.execute("SELECT id FROM users WHERE email=%s OR username=%s", 
-                      (user.email, user.username))
-        existing_user = cursor.fetchone()
-        if existing_user:
-            raise HTTPException(status_code=400, detail="User with this email or username already exists")
+        cursor.execute("SELECT id FROM users WHERE email=%s OR username=%s", (user.email, user.username))
+        if cursor.fetchone():
+            raise HTTPException(status_code=400, detail="User already exists")
         
-        # Create user (hash_password now handles truncation)
         hashed_pw = hash_password(user.password)
         cursor.execute(
             "INSERT INTO users (username, email, password_hash) VALUES (%s, %s, %s) RETURNING id",
@@ -148,7 +134,6 @@ def signup(user: UserSignup):
         user_id = cursor.fetchone()[0]
         conn.commit()
         
-        # Create token
         token = create_access_token({"user_id": user_id})
         
         return {
@@ -165,7 +150,7 @@ def signup(user: UserSignup):
         cursor.close()
         conn.close()
 
-# ---------- LOGIN ----------
+# LOGIN
 @app.post("/login")
 def login(user: UserLogin):
     conn = get_db_connection()
@@ -182,17 +167,13 @@ def login(user: UserLogin):
         
         return {
             "token": token,
-            "user": {
-                "id": db_user['id'],
-                "username": db_user['username'],
-                "email": db_user['email']
-            }
+            "user": {"id": db_user['id'], "username": db_user['username'], "email": db_user['email']}
         }
     finally:
         cursor.close()
         conn.close()
 
-# ---------- GET JOBS (Protected) ----------
+# GET JOBS
 @app.get("/jobs")
 def get_jobs(user_id: int = Depends(get_current_user)):
     conn = get_db_connection()
@@ -203,20 +184,21 @@ def get_jobs(user_id: int = Depends(get_current_user)):
     conn.close()
     return jobs
 
-# ---------- ADD JOB (Protected) ----------
+# ADD JOB
 @app.post("/jobs")
 def add_job(job: dict, user_id: int = Depends(get_current_user)):
     conn = get_db_connection()
     cursor = conn.cursor()
-    sql = "INSERT INTO jobs (company, role, status, applied_date, user_id) VALUES (%s,%s,%s,%s,%s)"
-    values = (job["company"], job["role"], job["status"], job["applied_date"], user_id)
-    cursor.execute(sql, values)
+    cursor.execute(
+        "INSERT INTO jobs (company, role, status, applied_date, user_id) VALUES (%s,%s,%s,%s,%s)",
+        (job["company"], job["role"], job["status"], job["applied_date"], user_id)
+    )
     conn.commit()
     cursor.close()
     conn.close()
     return {"message": "Job added"}
 
-# ---------- DELETE JOB (Protected) ----------
+# DELETE JOB
 @app.delete("/jobs/{job_id}")
 def delete_job(job_id: int, user_id: int = Depends(get_current_user)):
     conn = get_db_connection()
@@ -227,14 +209,15 @@ def delete_job(job_id: int, user_id: int = Depends(get_current_user)):
     conn.close()
     return {"message": "Deleted"}
 
-# ---------- UPDATE JOB (Protected) ----------
+# UPDATE JOB
 @app.put("/jobs/{job_id}")
 def update_job(job_id: int, job: dict, user_id: int = Depends(get_current_user)):
     conn = get_db_connection()
     cursor = conn.cursor()
-    sql = "UPDATE jobs SET company=%s, role=%s, status=%s, applied_date=%s WHERE id=%s AND user_id=%s"
-    values = (job["company"], job["role"], job["status"], job["applied_date"], job_id, user_id)
-    cursor.execute(sql, values)
+    cursor.execute(
+        "UPDATE jobs SET company=%s, role=%s, status=%s, applied_date=%s WHERE id=%s AND user_id=%s",
+        (job["company"], job["role"], job["status"], job["applied_date"], job_id, user_id)
+    )
     conn.commit()
     cursor.close()
     conn.close()
