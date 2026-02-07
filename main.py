@@ -1,5 +1,4 @@
 from fastapi import FastAPI, HTTPException, Depends, Response
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import psycopg2
 from psycopg2.extras import RealDictCursor
@@ -8,18 +7,8 @@ import hashlib
 from jose import JWTError, jwt
 from datetime import datetime, timedelta
 from pydantic import BaseModel
-from typing import Dict
 
 app = FastAPI()
-
-# CORS Middleware (keeping it, but also adding headers manually)
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 # Security
 SECRET_KEY = "jobflow-secret-key-2026-change-in-production"
@@ -37,13 +26,28 @@ class UserLogin(BaseModel):
     email: str
     password: str
 
-# Helper function to add CORS headers to response
-def add_cors_headers(response: Response):
+# Middleware to add CORS headers to ALL responses
+@app.middleware("http")
+async def add_cors_middleware(request, call_next):
+    response = await call_next(request)
     response.headers["Access-Control-Allow-Origin"] = "*"
     response.headers["Access-Control-Allow-Credentials"] = "true"
-    response.headers["Access-Control-Allow-Methods"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
     response.headers["Access-Control-Allow-Headers"] = "*"
+    response.headers["Access-Control-Max-Age"] = "3600"
     return response
+
+# Handle OPTIONS requests
+@app.options("/{path:path}")
+async def options_handler():
+    return Response(
+        status_code=200,
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+            "Access-Control-Allow-Headers": "*",
+        }
+    )
 
 # Database
 def get_db_connection():
@@ -90,7 +94,7 @@ def init_db():
 
 init_db()
 
-# Auth functions
+# Auth
 def hash_password(password: str) -> str:
     return hashlib.sha256(password.encode()).hexdigest()
 
@@ -116,20 +120,12 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
 
 # ROOT
 @app.get("/")
-def read_root(response: Response):
-    add_cors_headers(response)
-    return {"status": "JobFlow API running", "message": "Use /docs for API"}
-
-# OPTIONS for all routes
-@app.options("/{full_path:path}")
-async def options_handler(response: Response):
-    add_cors_headers(response)
-    return {}
+def read_root():
+    return {"status": "JobFlow API running", "message": "Use /docs for API", "cors": "enabled"}
 
 # SIGNUP
 @app.post("/signup")
-def signup(user: UserSignup, response: Response):
-    add_cors_headers(response)
+def signup(user: UserSignup):
     conn = get_db_connection()
     cursor = conn.cursor()
     
@@ -173,8 +169,7 @@ def signup(user: UserSignup, response: Response):
 
 # LOGIN
 @app.post("/login")
-def login(user: UserLogin, response: Response):
-    add_cors_headers(response)
+def login(user: UserLogin):
     conn = get_db_connection()
     cursor = conn.cursor(cursor_factory=RealDictCursor)
     
@@ -197,8 +192,7 @@ def login(user: UserLogin, response: Response):
 
 # GET JOBS
 @app.get("/jobs")
-def get_jobs(response: Response, user_id: int = Depends(get_current_user)):
-    add_cors_headers(response)
+def get_jobs(user_id: int = Depends(get_current_user)):
     conn = get_db_connection()
     cursor = conn.cursor(cursor_factory=RealDictCursor)
     cursor.execute("SELECT * FROM jobs WHERE user_id=%s ORDER BY applied_date DESC", (user_id,))
@@ -209,8 +203,7 @@ def get_jobs(response: Response, user_id: int = Depends(get_current_user)):
 
 # ADD JOB
 @app.post("/jobs")
-def add_job(job: dict, response: Response, user_id: int = Depends(get_current_user)):
-    add_cors_headers(response)
+def add_job(job: dict, user_id: int = Depends(get_current_user)):
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
@@ -224,8 +217,7 @@ def add_job(job: dict, response: Response, user_id: int = Depends(get_current_us
 
 # DELETE JOB
 @app.delete("/jobs/{job_id}")
-def delete_job(job_id: int, response: Response, user_id: int = Depends(get_current_user)):
-    add_cors_headers(response)
+def delete_job(job_id: int, user_id: int = Depends(get_current_user)):
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("DELETE FROM jobs WHERE id=%s AND user_id=%s", (job_id, user_id))
@@ -236,8 +228,7 @@ def delete_job(job_id: int, response: Response, user_id: int = Depends(get_curre
 
 # UPDATE JOB
 @app.put("/jobs/{job_id}")
-def update_job(job_id: int, job: dict, response: Response, user_id: int = Depends(get_current_user)):
-    add_cors_headers(response)
+def update_job(job_id: int, job: dict, user_id: int = Depends(get_current_user)):
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute(
