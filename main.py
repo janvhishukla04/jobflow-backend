@@ -1,7 +1,6 @@
-from fastapi import FastAPI, HTTPException, Depends, Request
+from fastapi import FastAPI, HTTPException, Depends, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from fastapi.responses import JSONResponse
 import psycopg2
 from psycopg2.extras import RealDictCursor
 import os
@@ -9,30 +8,29 @@ import hashlib
 from jose import JWTError, jwt
 from datetime import datetime, timedelta
 from pydantic import BaseModel
+from starlette.middleware.base import BaseHTTPMiddleware
 
 app = FastAPI()
 
-# CORS Middleware - MORE PERMISSIVE
+# Custom CORS middleware that FORCES headers
+class ForceCORSMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "*"
+        return response
+
+# Add both middlewares
+app.add_middleware(ForceCORSMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["*"],
 )
-
-# Add OPTIONS handler for preflight requests
-@app.options("/{full_path:path}")
-async def options_handler(full_path: str):
-    return JSONResponse(
-        content={},
-        headers={
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-            "Access-Control-Allow-Headers": "*",
-        }
-    )
 
 # Security setup
 SECRET_KEY = "jobflow-secret-key-2026-change-in-production"
@@ -120,6 +118,11 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
         return user_id
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid token")
+
+# ROOT endpoint
+@app.get("/")
+def read_root():
+    return {"status": "JobFlow API is running", "message": "Use /docs for API documentation"}
 
 # SIGNUP
 @app.post("/signup")
